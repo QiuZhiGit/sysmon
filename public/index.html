@@ -1,0 +1,955 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>服务器资源监控</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #1c2230;
+    --border: #293040;
+    --text: #e6edf3;
+    --dim: #8b949e;
+    --cpu: #4aa3ff;
+    --mem: #b57bff;
+    --ok: #3fb950;
+    --warn: #d29922;
+    --bad: #f85149;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", Roboto, sans-serif;
+    padding: 18px;
+    min-height: 100vh;
+  }
+  header {
+    display: flex; flex-wrap: wrap; gap: 12px;
+    align-items: baseline; justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  h1 { font-size: 19px; margin: 0; font-weight: 600; letter-spacing: .3px; }
+  .meta { color: var(--dim); font-size: 12.5px; }
+  .meta b { color: var(--text); font-weight: 600; }
+
+  .status-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--dim); margin-right: 6px; vertical-align: middle;
+    transition: background .3s;
+  }
+  .status-dot.live { background: var(--ok); box-shadow: 0 0 8px var(--ok); animation: pulse 2s infinite; }
+  .status-dot.down { background: var(--bad); }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+
+  .grid { display: grid; gap: 14px; }
+  .grid-2 { grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px 12px;
+  }
+  .card h2 {
+    font-size: 13px; margin: 0 0 10px; font-weight: 600;
+    color: var(--dim); text-transform: uppercase; letter-spacing: .6px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .big { font-size: 34px; font-weight: 700; line-height: 1.1; letter-spacing: -.5px; }
+  .big .unit { font-size: 16px; font-weight: 500; color: var(--dim); margin-left: 3px; }
+  .sub { color: var(--dim); font-size: 12.5px; margin-top: 4px; }
+
+  .bar { height: 8px; background: var(--panel-2); border-radius: 5px; overflow: hidden; margin-top: 10px; }
+  .bar > i { display: block; height: 100%; width: 0; border-radius: 5px; transition: width .45s ease, background .3s; }
+  .cpu-fill { background: linear-gradient(90deg, #2f81f7, #4aa3ff); }
+  .mem-fill { background: linear-gradient(90deg, #8957e5, #b57bff); }
+  .fill-warn { background: linear-gradient(90deg, #bb8009, #d29922) !important; }
+  .fill-bad { background: linear-gradient(90deg, #b62324, #f85149) !important; }
+
+  canvas { display: block; width: 100%; height: 150px; }
+
+  .lede { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+
+  .cores { display: grid; grid-template-columns: repeat(auto-fill, minmax(58px, 1fr)); gap: 6px; margin-top: 12px; }
+  .core { text-align: center; }
+  .core .cbar {
+    height: 42px; background: var(--panel-2); border-radius: 4px;
+    display: flex; align-items: flex-end; overflow: hidden;
+  }
+  .core .cbar > i { display: block; width: 100%; height: 0; background: var(--cpu); transition: height .4s ease, background .3s; }
+  .core .cname { font-size: 10.5px; color: var(--dim); margin-top: 3px; }
+  .core .cval { font-size: 10.5px; color: var(--text); font-variant-numeric: tabular-nums; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--border); }
+  th { color: var(--dim); font-weight: 500; font-size: 12px; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tbody tr:last-child td { border-bottom: none; }
+  .diskbar { height: 6px; background: var(--panel-2); border-radius: 4px; overflow: hidden; min-width: 90px; }
+  .diskbar > i { display: block; height: 100%; background: var(--cpu); transition: width .4s; }
+
+  /* ---- 硬件区块 ---- */
+  .hw-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+  .hw-tile {
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px;
+  }
+  .hw-tile .k { color: var(--dim); font-size: 11.5px; letter-spacing: .3px; }
+  .hw-tile .v { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .hw-tile .v small { font-size: 12px; font-weight: 500; color: var(--dim); margin-left: 2px; }
+  .hw-tile .u { font-size: 11px; color: var(--dim); margin-top: 1px; }
+
+  .na {
+    background: repeating-linear-gradient(45deg, transparent, transparent 6px, rgba(255,255,255,.025) 6px, rgba(255,255,255,.025) 12px);
+  }
+  .na .v { color: var(--dim); font-size: 14px; font-weight: 600; }
+  .na-reason { font-size: 11px; color: var(--warn); margin-top: 4px; line-height: 1.4; }
+
+  .alert-list { display: flex; flex-direction: column; gap: 6px; }
+  .alert-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px; border-radius: 7px;
+    background: var(--panel-2); border-left: 3px solid var(--dim);
+    font-size: 13px;
+  }
+  .alert-row.crit { border-left-color: var(--bad); }
+  .alert-row.notice { border-left-color: var(--warn); }
+  .alert-row .lbl { flex: 1; }
+  .alert-row .cnt {
+    font-variant-numeric: tabular-nums; font-weight: 700;
+    min-width: 26px; text-align: right;
+  }
+  .alert-row.crit .cnt { color: var(--bad); }
+  .alert-row.notice .cnt { color: var(--warn); }
+  .alert-row .when { color: var(--dim); font-size: 11.5px; min-width: 118px; text-align: right; }
+
+  .empty-ok {
+    padding: 14px; text-align: center; color: var(--ok);
+    background: rgba(63,185,80,.07); border: 1px solid rgba(63,185,80,.25);
+    border-radius: 8px; font-size: 13px;
+  }
+
+  /* ---- 网络 ---- */
+  .net-dual { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .net-tile {
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px;
+  }
+  .net-tile .k { color: var(--dim); font-size: 11.5px; display: flex; align-items: center; gap: 5px; }
+  .net-tile .k i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+  .net-tile .v { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .net-tile .v small { font-size: 12px; font-weight: 500; color: var(--dim); margin-left: 2px; }
+  .rx-dot { background: #3fb950; }
+  .tx-dot { background: #d29922; }
+
+  .legend { display: flex; gap: 14px; font-size: 11.5px; color: var(--dim); margin-bottom: 4px; }
+  .legend span { display: flex; align-items: center; gap: 5px; }
+  .legend i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+
+  .iface-status {
+    display: inline-block; padding: 1px 7px; border-radius: 20px;
+    font-size: 11px; border: 1px solid var(--border); background: var(--panel-2);
+  }
+  .iface-status.up { color: var(--ok); border-color: rgba(63,185,80,.4); }
+  .iface-status.down { color: var(--dim); }
+  .iface-muted { color: var(--dim); font-size: 11.5px; }
+  .warn-text { color: var(--warn); }
+  .crit-text { color: var(--bad); }
+
+  .proc-section {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .proc-header {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 6px;
+    font-size: 12.5px; color: var(--dim);
+  }
+
+  /* ---- 进程内存 Top N ---- */
+  .proc-list { display: flex; flex-direction: column; gap: 2px; }
+  .proc-row {
+    display: grid;
+    grid-template-columns: 22px minmax(90px, 1.4fr) 1fr 78px 58px;
+    align-items: center; gap: 10px;
+    padding: 6px 4px;
+    border-bottom: 1px solid rgba(41,48,64,.5);
+    font-size: 13px;
+  }
+  .proc-row:last-child { border-bottom: none; }
+  .proc-row.head {
+    color: var(--dim); font-size: 11.5px; border-bottom-color: var(--border);
+    padding-bottom: 5px;
+  }
+  .proc-rank { color: var(--dim); font-variant-numeric: tabular-nums; text-align: right; font-size: 12px; }
+  .proc-name {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-weight: 500;
+  }
+  .proc-name .cnt {
+    color: var(--dim); font-weight: 400; font-size: 11.5px; margin-left: 4px;
+  }
+  .proc-bar { height: 7px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
+  .proc-bar > i { display: block; height: 100%; border-radius: 4px; transition: width .4s; }
+  .proc-mem { text-align: right; font-variant-numeric: tabular-nums; font-size: 12.5px; }
+  .proc-pct { text-align: right; font-variant-numeric: tabular-nums; font-size: 12.5px; color: var(--dim); }
+
+  footer { margin-top: 16px; color: var(--dim); font-size: 12px; text-align: center; }
+  .addr { font-family: ui-monospace, Consolas, monospace; color: var(--text); }
+  .chip {
+    display: inline-block; padding: 1px 7px; border-radius: 20px;
+    background: var(--panel-2); border: 1px solid var(--border);
+    font-size: 11.5px; color: var(--dim); margin-right: 6px;
+  }
+  @media (max-width: 620px) {
+    body { padding: 12px; }
+    .big { font-size: 28px; }
+    canvas { height: 120px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>服务器资源监控</h1>
+    <div class="meta" id="hostline">连接中…</div>
+  </div>
+  <div class="meta" style="text-align:right">
+    <div><span class="status-dot" id="dot"></span><span id="statustext">未连接</span></div>
+    <div id="clock" style="font-variant-numeric: tabular-nums"></div>
+  </div>
+</header>
+
+<div class="grid grid-2">
+  <!-- CPU -->
+  <section class="card">
+    <h2><span>CPU 利用率</span><span id="cpucores" class="meta"></span></h2>
+    <div class="lede">
+      <div>
+        <div class="big"><span id="cpuval">--</span><span class="unit">%</span></div>
+        <div class="sub" id="cpusub">正在采样…</div>
+      </div>
+      <div class="sub" id="cpupeak" style="text-align:right"></div>
+    </div>
+    <div class="bar"><i class="cpu-fill" id="cpubar"></i></div>
+    <canvas id="cpuchart" height="150"></canvas>
+    <div class="cores" id="cores"></div>
+  </section>
+
+  <!-- 内存 + 进程 Top N 合为一个模块 -->
+  <section class="card">
+    <h2><span>内存利用率</span><span id="memlabel" class="meta"></span></h2>
+    <div class="lede">
+      <div>
+        <div class="big"><span id="memval">--</span><span class="unit">%</span></div>
+        <div class="sub" id="memsub">正在采样…</div>
+      </div>
+      <div class="sub" id="mempeak" style="text-align:right"></div>
+    </div>
+    <div class="bar"><i class="mem-fill" id="membar"></i></div>
+    <canvas id="memchart" height="130"></canvas>
+
+    <!-- 内存占用 Top N：与内存利用率同处一卡，便于对照 -->
+    <div class="proc-section">
+      <div class="proc-header">
+        <span>占用内存最高的程序</span>
+        <span class="meta" id="proc-ts"></span>
+      </div>
+      <div id="proc-body"><div class="sub">读取中…</div></div>
+    </div>
+  </section>
+</div>
+
+<div class="grid grid-2">
+  <!-- 磁盘 I/O -->
+  <section class="card">
+    <h2><span>磁盘 I/O 利用率</span><span class="meta" id="dio-ts"></span></h2>
+    <div class="lede">
+      <div>
+        <div class="big"><span id="dio-val">--</span><span class="unit">%</span></div>
+        <div class="sub" id="dio-sub">等待采集…</div>
+      </div>
+      <div class="sub" id="dio-queue" style="text-align:right"></div>
+    </div>
+    <div class="bar"><i class="cpu-fill" id="dio-bar"></i></div>
+    <canvas id="diochart" height="150"></canvas>
+    <div class="hw-grid" style="margin-top:10px">
+      <div class="hw-tile">
+        <div class="k">读取速率</div>
+        <div class="v" id="dio-read">--<small>MB/s</small></div>
+      </div>
+      <div class="hw-tile">
+        <div class="k">写入速率</div>
+        <div class="v" id="dio-write">--<small>MB/s</small></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 磁盘占用 -->
+  <section class="card">
+    <h2><span>磁盘占用</span><span class="meta" id="diskts"></span></h2>
+    <table>
+      <thead>
+        <tr><th>盘符</th><th class="num">已用 / 总量</th><th class="num">剩余</th><th style="width:34%">使用率</th></tr>
+      </thead>
+      <tbody id="disks"><tr><td colspan="4" class="sub">读取中…</td></tr></tbody>
+    </table>
+  </section>
+</div>
+
+<div class="grid">
+  <!-- 网络监控 -->
+  <section class="card">
+    <h2><span>网络监控</span><span class="meta" id="net-ts"></span></h2>
+    <div class="net-dual">
+      <div class="net-tile">
+        <div class="k"><i class="rx-dot"></i>接收速率</div>
+        <div class="v" id="net-rx">--<small>MB/s</small></div>
+      </div>
+      <div class="net-tile">
+        <div class="k"><i class="tx-dot"></i>发送速率</div>
+        <div class="v" id="net-tx">--<small>MB/s</small></div>
+      </div>
+    </div>
+    <div class="legend" style="margin-top:10px">
+      <span><i class="rx-dot"></i>收</span><span><i class="tx-dot"></i>发</span>
+    </div>
+    <canvas id="netchart" height="150"></canvas>
+    <table style="margin-top:10px">
+      <thead>
+        <tr>
+          <th>网卡</th>
+          <th class="num">链路</th>
+          <th class="num">接收</th>
+          <th class="num">发送</th>
+          <th class="num">利用率</th>
+          <th class="num">错误/丢弃</th>
+        </tr>
+      </thead>
+      <tbody id="net-ifaces"><tr><td colspan="6" class="sub">读取中…</td></tr></tbody>
+    </table>
+  </section>
+</div>
+
+<!-- 硬件告警 -->
+<div class="grid">
+  <section class="card">
+    <h2><span>硬件告警巡检</span><span class="meta" id="events-ts"></span></h2>
+    <div id="events-body"><div class="sub">巡检中…</div></div>
+  </section>
+</div>
+
+<!-- 运行信息：放最底部 -->
+<div class="grid">
+  <section class="card">
+    <h2><span>运行信息</span></h2>
+    <table>
+      <tbody id="sysinfo">
+        <tr><td class="sub" colspan="2">读取中…</td></tr>
+      </tbody>
+    </table>
+  </section>
+</div>
+
+<footer>
+  局域网访问地址：<span class="addr" id="accessurls">—</span>
+  <div style="margin-top:6px">
+    <span class="chip">数据源：Node.js os</span><span class="chip" id="ifacelist"></span>
+  </div>
+</footer>
+
+<script>
+'use strict';
+
+const MAX_POINTS = 300;       // 图表保留点数
+const $ = (id) => document.getElementById(id);
+
+let cpuSeries = [];           // {t, v}
+let memSeries = [];
+let dioSeries = [];           // 磁盘 I/O 利用率
+let netRxSeries = [];         // 网络接收 MB/s
+let netTxSeries = [];         // 网络发送 MB/s
+let lastSnap = null;
+let peakCpu = 0, peakMem = 0, peakDio = 0;
+let peakRx = 0, peakTx = 0;
+let es = null;
+let connectedOnce = false;
+
+// ------------------------------------------------------------ 画布
+
+function fitCanvas(canvas) {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const w = Math.max(1, Math.round(rect.width));
+  const h = Math.max(1, Math.round(rect.height));
+  if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+  }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w, h };
+}
+
+/** 通用折线图：固定 0-100 纵轴，横向铺满历史 */
+function drawChart(canvas, series, color, fillTop, fillBottom) {
+  const { ctx, w, h } = fitCanvas(canvas);
+  ctx.clearRect(0, 0, w, h);
+
+  const padL = 30, padR = 6, padT = 8, padB = 16;
+  const gw = w - padL - padR;
+  const gh = h - padT - padB;
+
+  // 网格与刻度
+  ctx.font = '10px ui-monospace, Consolas, monospace';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (let p = 0; p <= 100; p += 25) {
+    const y = padT + gh - (p / 100) * gh;
+    ctx.strokeStyle = p === 0 ? '#39415a' : '#222a3a';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(padL, Math.round(y) + .5);
+    ctx.lineTo(padL + gw, Math.round(y) + .5);
+    ctx.stroke();
+    ctx.fillStyle = '#6b7484';
+    ctx.fillText(p + '%', padL - 6, y);
+  }
+
+  if (series.length < 2) return;
+
+  // 点位置：最右侧的点贴近右边，最多铺满 MAX_POINTS
+  const stepX = gw / Math.max(1, MAX_POINTS - 1);
+  const n = series.length;
+  const xFor = (i) => padL + gw - (n - 1 - i) * stepX;
+  const yFor = (v) => padT + gh - (Math.max(0, Math.min(100, v)) / 100) * gh;
+
+  // 面积
+  const grad = ctx.createLinearGradient(0, padT, 0, padT + gh);
+  grad.addColorStop(0, fillTop);
+  grad.addColorStop(1, fillBottom);
+  ctx.beginPath();
+  ctx.moveTo(xFor(0), padT + gh);
+  for (let i = 0; i < n; i++) ctx.lineTo(xFor(i), yFor(series[i].v));
+  ctx.lineTo(xFor(n - 1), padT + gh);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // 折线
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) {
+    const x = xFor(i), y = yFor(series[i].v);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.6;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+
+  // 末端光点
+  const lx = xFor(n - 1), ly = yFor(series[n - 1].v);
+  ctx.beginPath();
+  ctx.arc(lx, ly, 2.6, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+/** 双序列折线图，纵轴自动缩放（网络速率用，无固定上限） */
+function drawNetChart(canvas, rxSeries, txSeries) {
+  const { ctx, w, h } = fitCanvas(canvas);
+  ctx.clearRect(0, 0, w, h);
+
+  const padL = 46, padR = 6, padT = 8, padB = 16;
+  const gw = w - padL - padR;
+  const gh = h - padT - padB;
+
+  // 自动上限：取两序列最大值，向上取整到较友好的刻度
+  let peak = 0;
+  for (const p of rxSeries) peak = Math.max(peak, p.v);
+  for (const p of txSeries) peak = Math.max(peak, p.v);
+
+  let top = peak > 0 ? peak * 1.15 : 1;
+  // 数量级归整，避免刻度出现 0.37 这种数
+  const mag = Math.pow(10, Math.floor(Math.log10(top)));
+  const steps = [1, 2, 2.5, 5, 10];
+  for (const s of steps) {
+    if (top <= mag * s) { top = mag * s; break; }
+  }
+  if (top <= 0) top = 1;
+
+  // 网格与刻度
+  ctx.font = '10px ui-monospace, Consolas, monospace';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i <= 4; i++) {
+    const frac = i / 4;
+    const v = top * frac;
+    const y = padT + gh - frac * gh;
+    ctx.strokeStyle = i === 0 ? '#39415a' : '#222a3a';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(padL, Math.round(y) + .5);
+    ctx.lineTo(padL + gw, Math.round(y) + .5);
+    ctx.stroke();
+    ctx.fillStyle = '#6b7484';
+    const label = v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(0) : v.toFixed(v >= 1 ? 1 : 2);
+    ctx.fillText(label + 'M', padL - 6, y);
+  }
+
+  const drawSeries = (series, color, fillTop, fillBottom) => {
+    if (series.length < 2) return;
+    const stepX = gw / Math.max(1, MAX_POINTS - 1);
+    const n = series.length;
+    const xFor = (i) => padL + gw - (n - 1 - i) * stepX;
+    const yFor = (v) => padT + gh - (Math.max(0, Math.min(top, v)) / top) * gh;
+
+    const grad = ctx.createLinearGradient(0, padT, 0, padT + gh);
+    grad.addColorStop(0, fillTop);
+    grad.addColorStop(1, fillBottom);
+    ctx.beginPath();
+    ctx.moveTo(xFor(0), padT + gh);
+    for (let i = 0; i < n; i++) ctx.lineTo(xFor(i), yFor(series[i].v));
+    ctx.lineTo(xFor(n - 1), padT + gh);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+      const x = xFor(i), y = yFor(series[i].v);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.6;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+
+    const lx = xFor(n - 1), ly = yFor(series[n - 1].v);
+    ctx.beginPath();
+    ctx.arc(lx, ly, 2.6, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+  };
+
+  drawSeries(rxSeries, '#3fb950', 'rgba(63,185,80,.26)', 'rgba(63,185,80,0)');
+  drawSeries(txSeries, '#d29922', 'rgba(210,153,34,.22)', 'rgba(210,153,34,0)');
+}
+
+function drawAll() {
+  drawChart($('cpuchart'), cpuSeries, '#4aa3ff', 'rgba(74,163,255,.28)', 'rgba(74,163,255,0)');
+  drawChart($('memchart'), memSeries, '#b57bff', 'rgba(181,123,255,.28)', 'rgba(181,123,255,0)');
+  drawChart($('diochart'), dioSeries, '#3fb950', 'rgba(63,185,80,.28)', 'rgba(63,185,80,0)');
+  drawNetChart($('netchart'), netRxSeries, netTxSeries);
+}
+
+// ------------------------------------------------------------ 渲染
+
+function severity(v) {
+  if (v >= 90) return 'fill-bad';
+  if (v >= 75) return 'fill-warn';
+  return '';
+}
+
+function fmtDuration(sec) {
+  sec = Math.max(0, Math.floor(sec));
+  const d = Math.floor(sec / 86400);
+  const hh = Math.floor((sec % 86400) / 3600);
+  const mm = Math.floor((sec % 3600) / 60);
+  const ss = sec % 60;
+  if (d > 0) return `${d}天 ${hh}小时 ${mm}分`;
+  if (hh > 0) return `${hh}小时 ${mm}分`;
+  if (mm > 0) return `${mm}分 ${ss}秒`;
+  return `${ss}秒`;
+}
+
+function pushSeries(arr, t, v) {
+  arr.push({ t, v });
+  if (arr.length > MAX_POINTS) arr.splice(0, arr.length - MAX_POINTS);
+}
+
+/** 硬件区块：磁盘 I/O */
+function renderDiskIo(io) {
+  if (!io) return;
+  const ts = $('dio-ts');
+
+  if (!io.available) {
+    // 区分「正在采集」和「确实拿不到」
+    const reason = io.pending ? '正在连接 typeperf…' : (io.error || '采集不可用');
+    $('dio-val').textContent = '--';
+    $('dio-sub').textContent = reason;
+    $('dio-bar').style.width = '0%';
+    $('dio-read').innerHTML = '--<small>MB/s</small>';
+    $('dio-write').innerHTML = '--<small>MB/s</small>';
+    $('dio-queue').innerHTML = '';
+    ts.textContent = io.pending ? '' : '不可用';
+    ts.style.color = io.pending ? '' : 'var(--warn)';
+    return;
+  }
+
+  const util = io.util;
+  peakDio = Math.max(peakDio, util);
+  $('dio-val').textContent = util.toFixed(1);
+  $('dio-bar').style.width = util.toFixed(1) + '%';
+  $('dio-bar').className = 'cpu-fill ' + severity(util);
+  $('dio-sub').textContent = `2 秒采样 · 峰值 ${peakDio.toFixed(1)}%`;
+  $('dio-queue').innerHTML = `队列深度<br><b style="color:#e6edf3">${io.queue.toFixed(2)}</b>`;
+  $('dio-read').innerHTML = `${io.readMBs.toFixed(2)}<small>MB/s</small>`;
+  $('dio-write').innerHTML = `${io.writeMBs.toFixed(2)}<small>MB/s</small>`;
+  ts.textContent = `更新于 ${new Date(io.at).toLocaleTimeString('zh-CN', { hour12: false })}`;
+  ts.style.color = '';
+}
+
+
+/** 网络区块 */
+function renderNetwork(net) {
+  const ts = $('net-ts');
+  const tbody = $('net-ifaces');
+
+  if (!net) return;
+
+  if (net.pending) {
+    $('net-rx').innerHTML = '--<small>MB/s</small>';
+    $('net-tx').innerHTML = '--<small>MB/s</small>';
+    ts.textContent = '正在连接 typeperf…';
+    return;
+  }
+
+  if (!net.available) {
+    $('net-rx').innerHTML = '--<small>MB/s</small>';
+    $('net-tx').innerHTML = '--<small>MB/s</small>';
+    tbody.innerHTML = `<tr><td colspan="6" class="warn-text">${net.error || '网络数据不可用'}</td></tr>`;
+    ts.textContent = '不可用';
+    ts.style.color = 'var(--warn)';
+    return;
+  }
+
+  const rx = net.totalRxMBs || 0;
+  const tx = net.totalTxMBs || 0;
+  peakRx = Math.max(peakRx, rx);
+  peakTx = Math.max(peakTx, tx);
+
+  $('net-rx').innerHTML = `${rx.toFixed(2)}<small>MB/s</small>`;
+  $('net-tx').innerHTML = `${tx.toFixed(2)}<small>MB/s</small>`;
+  ts.textContent = `2 秒采样 · 峰值 收 ${peakRx.toFixed(1)} / 发 ${peakTx.toFixed(1)} MB/s`;
+  ts.style.color = '';
+
+  const ifaces = net.interfaces || [];
+  if (!ifaces.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="sub">未发现活动网卡</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = ifaces.map((f) => {
+    const st = (f.status || '').toLowerCase();
+    const stCls = st === 'up' ? 'up' : st === 'disconnected' || st === 'down' ? 'down' : '';
+    const speed = f.speedMbps ? (f.speedMbps >= 1000 ? (f.speedMbps / 1000).toFixed(0) + ' Gbps' : f.speedMbps + ' Mbps') : '—';
+    const util = f.utilization == null
+      ? '<span class="iface-muted">—</span>'
+      : `<span class="${f.utilization >= 80 ? 'crit-text' : f.utilization >= 50 ? 'warn-text' : ''}">${f.utilization.toFixed(1)}%</span>`;
+    const errs = (f.rxErrors + f.txErrors);
+    const drops = (f.rxDiscarded + f.txDiscarded);
+    const errCell = (errs || drops)
+      ? `<span class="${errs ? 'crit-text' : 'warn-text'}">${errs} / ${drops}</span>`
+      : '<span class="iface-muted">0 / 0</span>';
+
+    return `<tr>
+      <td>
+        <div>${f.name}</div>
+        ${f.description ? `<div class="iface-muted">${f.description}</div>` : ''}
+      </td>
+      <td class="num">
+        ${speed}
+        ${f.status ? `<div><span class="iface-status ${stCls}">${f.status}</span></div>` : ''}
+      </td>
+      <td class="num">${f.rxMBs.toFixed(2)} MB/s</td>
+      <td class="num">${f.txMBs.toFixed(2)} MB/s</td>
+      <td class="num">${util}</td>
+      <td class="num">${errCell}</td>
+    </tr>`;
+  }).join('');
+}
+
+/** 进程内存 Top N */
+function renderProcesses(pr) {
+  const body = $('proc-body');
+  const ts = $('proc-ts');
+  if (!pr) return;
+
+  if (pr.pending) {
+    body.innerHTML = '<div class="sub">读取中…（首次约 1 秒）</div>';
+    return;
+  }
+  if (pr.disabled) {
+    body.innerHTML = '<div class="na-reason">进程内存采集已在 config.json 中关闭（enableProcesses=false）。</div>';
+    ts.textContent = '已关闭';
+    ts.style.color = 'var(--dim)';
+    return;
+  }
+  if (!pr.available) {
+    body.innerHTML = `<div class="na-reason">进程列表读取失败：${pr.error || '未知原因'}</div>`;
+    ts.textContent = '不可用';
+    ts.style.color = 'var(--warn)';
+    return;
+  }
+
+  const top = pr.top || [];
+  if (!top.length) {
+    body.innerHTML = '<div class="sub">未取到进程数据</div>';
+    return;
+  }
+
+  const maxMB = Math.max(...top.map((p) => p.privateMB), 1);
+
+  const head = `<div class="proc-row head">
+    <span class="proc-rank">#</span>
+    <span>程序</span>
+    <span>占比（相对已用内存）</span>
+    <span class="proc-mem">私有内存</span>
+    <span class="proc-pct">占总量</span>
+  </div>`;
+
+  const rows = top.map((p, i) => {
+    // 条形长度按 Top1 归一，便于横向比较
+    const width = (p.privateMB / maxMB) * 100;
+    const color = p.pctOfUsed >= 25 ? '#f85149' : p.pctOfUsed >= 10 ? '#d29922' : '#4aa3ff';
+    const cnt = p.count > 1 ? `<span class="cnt">×${p.count}</span>` : '';
+    return `<div class="proc-row">
+      <span class="proc-rank">${i + 1}</span>
+      <span class="proc-name" title="${p.name}">${p.name}${cnt}</span>
+      <span class="proc-bar"><i style="width:${width.toFixed(1)}%;background:${color}"></i></span>
+      <span class="proc-mem">${p.privateMB >= 1024 ? (p.privateMB / 1024).toFixed(2) + ' GB' : p.privateMB.toFixed(0) + ' MB'}</span>
+      <span class="proc-pct">${p.pctOfUsed.toFixed(1)}%</span>
+    </div>`;
+  }).join('');
+
+  body.innerHTML = `<div class="proc-list">${head}${rows}</div>
+    <div class="sub" style="margin-top:8px">
+      共 ${pr.processCount} 个进程 / ${pr.groupCount} 个程序，已用 ${(pr.usedMB / 1024).toFixed(1)} / ${(pr.totalMB / 1024).toFixed(1)} GB（${pr.usedPercent}%）。
+      同名进程已合并（如浏览器多进程）；内存口径为私有字节，与任务管理器一致。
+    </div>`;
+  ts.textContent = `每 5 秒刷新 · ${new Date(pr.at).toLocaleTimeString('zh-CN', { hour12: false })}`;
+  ts.style.color = '';
+}
+
+/** 硬件区块：告警巡检 */
+function renderEvents(ev) {
+  if (!ev) return;
+  const body = $('events-body');
+  const ts = $('events-ts');
+
+  if (ev.pending) {
+    body.innerHTML = '<div class="sub">巡检中…（首次约需 2~5 秒）</div>';
+    return;
+  }
+
+  if (!ev.available) {
+    body.innerHTML = `<div class="na-reason">事件日志读取失败：${ev.error || '未知原因'}</div>`;
+    ts.textContent = '不可用';
+    ts.style.color = 'var(--warn)';
+    return;
+  }
+
+  ts.textContent = `回看 ${ev.windowHours} 小时 · 每 5 分钟巡检 · ${new Date(ev.at).toLocaleTimeString('zh-CN', { hour12: false })}`;
+  ts.style.color = '';
+
+  if (!ev.items.length) {
+    body.innerHTML = `<div class="empty-ok">✓ 最近 ${ev.windowHours} 小时内未发现硬件或稳定性告警</div>`;
+    return;
+  }
+
+  const rows = ev.items
+    .slice()
+    .sort((a, b) => (Number(b.critical) - Number(a.critical)) || (b.count - a.count))
+    .map((it) => {
+      const cls = it.critical ? 'crit' : it.notice ? 'notice' : '';
+      return `<div class="alert-row ${cls}">
+        <span class="lbl">${it.label}</span>
+        <span class="when">${it.lastTime ? '最近 ' + it.lastTime : ''}</span>
+        <span class="cnt">${it.count}</span>
+      </div>`;
+    })
+    .join('');
+
+  body.innerHTML = `<div class="alert-list">${rows}</div>
+    <div class="sub" style="margin-top:8px">共 ${ev.total} 条。非正常关机多与断电/UPS 有关；WHEA/磁盘/蓝屏属硬件级信号，需优先排查。</div>`;
+}
+
+function renderSnapshot(s) {
+  lastSnap = s;
+
+  // CPU
+  const cpu = s.cpu.usage;
+  peakCpu = Math.max(peakCpu, cpu);
+  $('cpuval').textContent = cpu.toFixed(1);
+  $('cpubar').style.width = cpu.toFixed(1) + '%';
+  $('cpubar').className = 'cpu-fill ' + severity(cpu);
+  $('cpucores').textContent = `${s.cpu.cores} 核`;
+  $('cpusub').textContent = `1 秒采样 · 峰值 ${peakCpu.toFixed(1)}%`;
+  $('cpupeak').innerHTML = `负载<br><b style="color:#e6edf3">${(cpu / 100).toFixed(0)}</b> 次/满核`;
+
+  const cores = s.cpu.perCore || [];
+  if (cores.length && $('cores').children.length !== cores.length) {
+    $('cores').innerHTML = cores.map((_, i) =>
+      `<div class="core" data-i="${i}"><div class="cbar"><i></i></div>
+       <div class="cval">—</div><div class="cname">CPU${i}</div></div>`).join('');
+  }
+  cores.forEach((v, i) => {
+    const el = document.querySelector(`.core[data-i="${i}"]`);
+    if (!el) return;
+    const bar = el.querySelector('i');
+    bar.style.height = Math.max(2, v) + '%';
+    bar.style.background = v >= 90 ? '#f85149' : v >= 75 ? '#d29922' : '#4aa3ff';
+    el.querySelector('.cval').textContent = v.toFixed(0) + '%';
+  });
+
+  // 内存
+  const mem = s.mem.usage;
+  peakMem = Math.max(peakMem, mem);
+  $('memval').textContent = mem.toFixed(1);
+  $('membar').style.width = mem.toFixed(1) + '%';
+  $('membar').className = 'mem-fill ' + severity(mem);
+  $('memsub').textContent = `${s.mem.usedGB} GB / ${s.mem.totalGB} GB`;
+  $('memlabel').textContent = `剩余 ${s.mem.freeGB} GB`;
+  $('mempeak').innerHTML = `峰值<br><b style="color:#e6edf3">${peakMem.toFixed(1)}</b> %`;
+
+  // 曲线（先把数据推入，再统一重绘，避免曲线滞后一帧）
+  pushSeries(cpuSeries, s.ts, cpu);
+  pushSeries(memSeries, s.ts, mem);
+
+  // 硬件区块
+  const hw = s.hardware || {};
+  renderDiskIo(hw.diskIo);
+  renderEvents(hw.events);
+  if (hw.diskIo && hw.diskIo.available) pushSeries(dioSeries, s.ts, hw.diskIo.util);
+
+  // 网络区块
+  renderNetwork(s.network);
+  if (s.network && s.network.available) {
+    pushSeries(netRxSeries, s.ts, s.network.totalRxMBs || 0);
+    pushSeries(netTxSeries, s.ts, s.network.totalTxMBs || 0);
+  }
+
+  // 进程内存 Top N
+  renderProcesses(s.processes);
+
+  drawAll();
+
+  // 磁盘
+  const tbody = $('disks');
+  if (s.disks && s.disks.length) {
+    tbody.innerHTML = s.disks.map((d) => {
+      const cls = d.usage >= 90 ? 'fill-bad' : d.usage >= 75 ? 'fill-warn' : 'cpu-fill';
+      return `<tr>
+        <td>${d.mount}</td>
+        <td class="num">${d.usedGB} / ${d.totalGB} GB</td>
+        <td class="num">${d.freeGB} GB</td>
+        <td>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div class="diskbar" style="flex:1"><i class="${cls}" style="width:${d.usage}%"></i></div>
+            <span class="num" style="width:46px">${d.usage.toFixed(1)}%</span>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+    $('diskts').textContent = '每 15 秒刷新';
+  } else {
+    tbody.innerHTML = '<tr><td colspan="4" class="sub">未读取到磁盘信息</td></tr>';
+  }
+
+  $('sysinfo').innerHTML = `
+    <tr><td class="sub">已运行（系统）</td><td class="num">${fmtDuration(s.uptime.systemSec)}</td></tr>
+    <tr><td class="sub">已运行（本服务）</td><td class="num">${fmtDuration(s.uptime.serviceSec)}</td></tr>
+    <tr><td class="sub">监控进程内存</td><td class="num">${s.mem.serviceRssMB} MB</td></tr>
+  `;
+
+  $('clock').textContent = new Date(s.ts).toLocaleTimeString('zh-CN', { hour12: false });
+}
+
+function renderHost(info) {
+  $('hostline').innerHTML =
+    `<b>${info.hostname}</b> · ${info.cpuModel} · ${info.cores} 核 / ${info.totalMemGB} GB · ${info.platform} ${info.arch}`;
+
+  const urls = (info.addresses || []).map((a) => `http://${a.address}:${info.port}/`);
+  $('accessurls').textContent = urls.join('   ') || '仅本机';
+  $('ifacelist').textContent = (info.addresses || []).map((a) => a.iface).join(' / ');
+}
+
+function setStatus(state, text) {
+  const dot = $('dot');
+  dot.className = 'status-dot ' + state;
+  $('statustext').textContent = text;
+}
+
+// ------------------------------------------------------------ 数据连接
+
+function connect() {
+  if (es) { try { es.close(); } catch (_) {} }
+  es = new EventSource('/api/stream');
+
+  es.onopen = () => {
+    connectedOnce = true;
+    setStatus('live', '实时连接中');
+  };
+
+  es.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch (_) { return; }
+    if (msg.type === 'snapshot') {
+      renderSnapshot(msg.data);
+      if (connectedOnce) setStatus('live', '实时连接中');
+    } else if (msg.type === 'history') {
+      // 首次连接补齐历史，避免图表从空白开始
+      for (const pt of msg.data || []) {
+        pushSeries(cpuSeries, pt.t, pt.cpu);
+        pushSeries(memSeries, pt.t, pt.mem);
+        if (pt.dio != null) pushSeries(dioSeries, pt.t, pt.dio);
+        if (pt.nrx != null) pushSeries(netRxSeries, pt.t, pt.nrx);
+        if (pt.ntx != null) pushSeries(netTxSeries, pt.t, pt.ntx);
+      }
+      drawAll();
+    }
+  };
+
+  es.onerror = () => {
+    setStatus('down', '连接中断，重试中…');
+  };
+}
+
+async function loadInfo() {
+  try {
+    const r = await fetch('/api/info', { cache: 'no-store' });
+    if (r.ok) renderHost(await r.json());
+  } catch (_) { /* 忽略 */ }
+}
+
+// ------------------------------------------------------------ 启动
+
+window.addEventListener('resize', () => {
+  clearTimeout(window.__rs);
+  window.__rs = setTimeout(drawAll, 120);
+});
+
+loadInfo();
+connect();
+setInterval(loadInfo, 60000);      // 定期刷新网卡/IP（换网络后能反映）
+setInterval(drawAll, 2000);        // 无数据时也保证画布随窗口尺寸更新
+
+// 页面隐藏时释放连接，回到前台重连，省资源
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (es) { es.close(); es = null; }
+    setStatus('', '页面已隐藏');
+  } else {
+    connect();
+  }
+});
+</script>
+</body>
+</html>

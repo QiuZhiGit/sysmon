@@ -1,0 +1,20 @@
+# ---- 运行产物 ----
+logs/
+*.log
+
+# ---- 临时文件 ----
+screenshot.png
+*.tmp
+*.bak
+
+# ---- 第三方二进制 ----
+# LibreHardwareMonitor v0.9.6（约 11.6 MB，43 个文件）
+# 温度模块当前已下线；如需恢复，按 README 说明自行下载解压到 tools/lhm/
+tools/lhm/
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store

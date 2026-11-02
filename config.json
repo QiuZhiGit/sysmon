@@ -1,0 +1,22 @@
+{
+  "host": "0.0.0.0",
+  "port": 8090,
+  "sampleIntervalMs": 1000,
+  "historyPoints": 600,
+  "diskIntervalMs": 15000,
+  "logMaxBytes": 2097152,
+  "enableDiskIo": true,
+  "diskIoIntervalSec": 2,
+  "enableThermal": false,
+  "thermalIntervalMs": 20000,
+  "enableLhmLib": true,
+  "enableEvents": true,
+  "eventIntervalMs": 300000,
+  "eventWindowHours": 168,
+  "enableNetwork": true,
+  "networkIntervalSec": 2,
+  "networkMetaIntervalMs": 300000,
+  "enableProcesses": true,
+  "processIntervalMs": 5000,
+  "processTopN": 10
+}

@@ -1,0 +1,16 @@
+# 统一换行符，避免跨平台协作时 .cmd 被写成 LF 而无法被 cmd.exe 解析
+* text=auto
+
+# cmd.exe 严格要求 CRLF，否则会报 "'Expansion' is not recognized"
+*.cmd text eol=crlf
+*.vbs text eol=crlf
+*.ps1 text eol=crlf
+
+# 源码与文档统一 LF
+*.js  text eol=lf
+*.mjs text eol=lf
+*.json text eol=lf
+*.md  text eol=lf
+*.html text eol=lf
+*.gitignore text eol=lf
+*.gitattributes text eol=lf
